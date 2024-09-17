@@ -44,6 +44,12 @@ if TYPE_CHECKING:
     from lm_eval.api.task import Task
 
 
+"""
+Disabel accelerator for now, as we don't use accelerator in our code.
+"""
+DISABLE_ACCELERATOR = bool(1)
+
+
 @positional_deprecated
 def simple_evaluate(
     model,
@@ -463,7 +469,7 @@ def evaluate(
             reqtype = instance.request_type
             requests[reqtype].append(instance)
 
-        if lm.world_size > 1:
+        if lm.world_size > 1 and not DISABLE_ACCELERATOR:
             instances_rnk = torch.tensor(len(task._instances), device=lm.device)
             gathered_item = (
                 lm.accelerator.gather(instances_rnk).cpu().detach().numpy().tolist()
@@ -499,7 +505,7 @@ def evaluate(
         for x, req in zip(resps, cloned_reqs):
             req.resps.append(x)
 
-        if lm.world_size > 1:
+        if lm.world_size > 1 and not DISABLE_ACCELERATOR:
             lm.accelerator.wait_for_everyone()
 
     RANK = lm.rank
