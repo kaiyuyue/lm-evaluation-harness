@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, List, Optional, Union
 
 import numpy as np
 import torch
+import torch.distributed as dist
 
 import lm_eval.api.metrics
 import lm_eval.api.registry
@@ -45,7 +46,7 @@ if TYPE_CHECKING:
 
 
 """
-Disabel accelerator for now, as we don't use accelerator in our code.
+Disabel accelerator for now, as we don't use it.
 """
 DISABLE_ACCELERATOR = bool(1)
 
@@ -230,9 +231,7 @@ def simple_evaluate(
             use_cache
             # each rank receives a different cache db.
             # necessary to avoid multiple writes to cache at once
-            + "_rank"
-            + str(lm.rank)
-            + ".db",
+            + "_rank" + str(lm.rank) + ".db",
         )
 
     if task_manager is None:
@@ -456,12 +455,12 @@ def evaluate(
             system_instruction=system_instruction,
             apply_chat_template=bool(apply_chat_template),
             fewshot_as_multiturn=fewshot_as_multiturn,
-            chat_template=getattr(lm, "apply_chat_template")
-            if apply_chat_template
-            else None,
-            tokenizer_name=getattr(lm, "tokenizer_name", "")
-            if apply_chat_template
-            else "",
+            chat_template=(
+                getattr(lm, "apply_chat_template") if apply_chat_template else None
+            ),
+            tokenizer_name=(
+                getattr(lm, "tokenizer_name", "") if apply_chat_template else ""
+            ),
         )
         eval_logger.debug(
             f"Task: {task_output.task_name}; number of requests on this rank: {len(task.instances)}"
@@ -473,11 +472,17 @@ def evaluate(
             reqtype = instance.request_type
             requests[reqtype].append(instance)
 
-        if lm.world_size > 1 and not DISABLE_ACCELERATOR:
+        if lm.world_size > 1:
             instances_rnk = torch.tensor(len(task._instances), device=lm.device)
-            gathered_item = (
-                lm.accelerator.gather(instances_rnk).cpu().detach().numpy().tolist()
-            )
+            if not DISABLE_ACCELERATOR:
+                gathered_item = (
+                    lm.accelerator.gather(instances_rnk).cpu().detach().numpy().tolist()
+                )
+            else:
+                gathered_item = [torch.zeros_like(instances_rnk)] * lm.world_size
+                dist.all_gather(gathered_item, instances_rnk)
+                gathered_item = [x.item() for x in gathered_item]
+
             # "multiple_choice" task types dispatch (several) "loglikelihood" request types
             reqtype = (
                 "loglikelihood"
