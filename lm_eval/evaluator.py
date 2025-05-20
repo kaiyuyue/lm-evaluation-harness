@@ -514,8 +514,11 @@ def evaluate(
         for x, req in zip(resps, cloned_reqs):
             req.resps.append(x)
 
-        if lm.world_size > 1 and not DISABLE_ACCELERATOR:
-            lm.accelerator.wait_for_everyone()
+        if lm.world_size > 1:
+            if not DISABLE_ACCELERATOR:
+                lm.accelerator.wait_for_everyone()
+            else:
+                dist.barrier()
 
     RANK = lm.rank
     WORLD_SIZE = lm.world_size
